@@ -1,0 +1,27 @@
+# Cloudflare Workers deployment (free tier).
+#
+# One-time setup:
+#   npx wrangler login
+#   npx wrangler d1 create finance-monitor      # paste the printed database_id below
+#   npx wrangler secret put SESSION_SECRET      # any long random string
+#   npm run deploy
+#
+# The schema applies itself on first request, so there is no migration step.
+
+name = "finance-monitor"
+main = "src/server/adapters/worker.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "finance-monitor"
+database_id = "PASTE_YOUR_DATABASE_ID_HERE"

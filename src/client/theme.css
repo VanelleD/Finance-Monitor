@@ -1,0 +1,180 @@
+/*
+ * The design system from the Foundations artboard, as real tokens.
+ *
+ * Both palettes were checked with a validator rather than by eye: every data
+ * series colour clears the lightness band, the chroma floor, colour-blind
+ * separation (protanopia and deuteranopia), normal-vision separation, and 3:1
+ * contrast against the surface it is drawn on — in dark and in light.
+ *
+ * Dark is the default because that is what was asked for; the light palette is
+ * here so the toggle is a real design, not an inverted one.
+ */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --page: #0b0d11;
+  --card: #14171d;
+  --raised: #1b1f27;
+  --hairline: #1e232c;
+  --border: #262b35;
+  --grid: #232832;
+  --baseline: #333a46;
+
+  --ink: #eceef2;
+  --ink-2: #9ba4b4;
+  --ink-3: #8a94a5;
+
+  --gold: #e8c468;
+  --gold-hi: #f3d896;
+  --gold-ink: #14171d;
+
+  --series-1: #199e85; /* money in     */
+  --series-2: #c08322; /* money out    */
+  --series-3: #3b7fdb; /* investments  */
+  --series-4: #c95584; /* cash         */
+  --series-5: #7b68d9; /* property     */
+  --series-6: #d8564a; /* liabilities  */
+
+  --up: #3fd19b;
+  --down: #f2897c;
+  --warn: #fab219;
+  --crit: #d03b3b;
+
+  --scrim: rgba(4, 6, 9, 0.68);
+  --shadow-lg: 0 32px 80px rgba(0, 0, 0, 0.65);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --track-alpha: 0.2;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --page: #f4f4f1;
+  --card: #fbfbf9;
+  --raised: #f0f0ec;
+  --hairline: #e4e4dd;
+  --border: #d6d6cd;
+  --grid: #e7e7e0;
+  --baseline: #c3c2b7;
+
+  --ink: #14171d;
+  --ink-2: #53565e;
+  --ink-3: #6d7078;
+
+  --gold: #9a6f0f;
+  --gold-hi: #7d5a0a;
+  --gold-ink: #ffffff;
+
+  --series-1: #0e8a73;
+  --series-2: #b5761a;
+  --series-3: #2a6fd0;
+  --series-4: #c04c7c;
+  --series-5: #6a55ce;
+  --series-6: #cc4535;
+
+  --up: #0d7a52;
+  --down: #b6372a;
+  --warn: #8a6100;
+  --crit: #b02a2a;
+
+  --scrim: rgba(20, 23, 29, 0.42);
+  --shadow-lg: 0 24px 60px rgba(20, 23, 29, 0.22);
+  --shadow-md: 0 6px 18px rgba(20, 23, 29, 0.12);
+  --track-alpha: 0.18;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+h1, h2, h3, h4, p, figure, ul, ol {
+  margin: 0;
+}
+
+ul, ol {
+  padding: 0;
+  list-style: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--gold);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--gold-hi);
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Everything that must line up vertically: table figures, axis ticks. */
+.num {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Big standalone figures use proportional digits: tabular looks loose at display sizes. */
+.figure {
+  font-variant-numeric: normal;
+  letter-spacing: -0.02em;
+}
+
+.serif {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-weight: 400;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

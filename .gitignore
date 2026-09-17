@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.wrangler/
+*.local
+.env
+.env.*
+!.env.example
+data/*.sqlite
+data/*.sqlite-journal
+data/*.sqlite-wal
+data/*.sqlite-shm
+.DS_Store
