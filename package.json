@@ -8,6 +8,7 @@
     "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch src/server/adapters/node.ts",
     "dev:web": "vite",
+    "dev:cf": "npm run build && wrangler dev --local",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
@@ -35,6 +36,6 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "vitest": "^2.1.8",
-    "wrangler": "^3.99.0"
+    "wrangler": "^4.135.0"
   }
 }

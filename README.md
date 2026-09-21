@@ -43,25 +43,66 @@ Cloudflare Workers with static assets and D1. The free plan allows 100,000
 requests a day and 5M row-reads / 100k row-writes a day, which for one person
 logging transactions is orders of magnitude more headroom than you need.
 
+**Try it against the real runtime first, no account needed.** This runs the
+Workers runtime and a local D1 on your machine, so you find out it works before
+you sign up for anything:
+
 ```bash
-npx wrangler login
-npx wrangler d1 create finance-monitor    # paste the printed database_id into wrangler.toml
-npx wrangler secret put SESSION_SECRET    # a long random string
+echo "SESSION_SECRET=$(node -e 'console.log(crypto.randomUUID()+crypto.randomUUID())')" > .dev.vars
+npm run dev:cf        # http://localhost:8787
+```
+
+Then, to put it online:
+
+```bash
+npx wrangler login                        # opens a browser, authorises this machine
+npx wrangler d1 create finance-monitor    # copy the printed database_id
+#   paste it into wrangler.toml, replacing PASTE_YOUR_DATABASE_ID_HERE
+npx wrangler secret put SESSION_SECRET    # paste a long random string when prompted
 npm run deploy
 ```
 
-The schema applies itself on the first request, so there's no migration step.
+Wrangler prints the live URL, something like
+`https://finance-monitor.<your-subdomain>.workers.dev`. The schema applies itself
+on the first request, so there is no migration step.
 
-**Why the login is built in rather than handed to Cloudflare Access:** Access is
-free for up to 50 users, but it can only properly protect a domain you own — it
-can't reliably gate the default `*.pages.dev` / `workers.dev` hostname. Rather
-than require you to buy a domain, the app has its own passphrase gate.
+### Open it and set your passphrase immediately
+
+The first visitor to a fresh deployment is the one who sets the passphrase — that
+is how a single-user app with no signup can work at all. The hostname is not
+published anywhere, but it is on the public internet, so **claim it as soon as it
+deploys**.
+
+If you ever load it and see "Welcome back" instead of "Set your passphrase" on a
+deployment you have not set up yet, someone else got there first. Wipe it and
+start over:
+
+```bash
+npx wrangler d1 execute finance-monitor --remote \
+  --command "DELETE FROM settings WHERE key LIKE 'auth.%'"
+```
+
+### Why the login is built in rather than handed to Cloudflare Access
+
+Access is free for up to 50 users, but it can only properly protect a domain you
+own — it cannot reliably gate the default `*.workers.dev` hostname. Rather than
+require you to buy a domain, the app has its own passphrase gate. If you do point
+a domain at the Worker later, putting Access in front of it as a second layer is
+worth doing.
+
+### Looking at the deployed database
+
+```bash
+npx wrangler d1 execute finance-monitor --remote --command "SELECT COUNT(*) FROM entries"
+npx wrangler tail                         # live logs
+```
 
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `npm run dev` | Vite + API with hot reload |
+| `npm run dev:cf` | The real Workers runtime and a local D1, no account needed |
 | `npm run build` | Build the client into `dist/client` |
 | `npm test` | 74 unit and integration tests |
 | `npm run typecheck` | `tsc --noEmit` across client, server and tests |
@@ -106,6 +147,8 @@ almost nothing.
   `auth.verifier` row in the `settings` table to set a new one.
 - Sessions are signed cookies (HttpOnly, SameSite=Lax, Secure in production) with a
   30-day life. Eight wrong attempts locks logins for 15 minutes.
+- On a fresh deployment, whoever loads it first sets the passphrase. Claim it the
+  moment it goes up (see above).
 - CSV export quotes every cell and defuses leading `=`, `+`, `-` and `@`, so a payee
   named `=HYPERLINK(...)` can't execute when the file is opened in a spreadsheet.
 - Entry search escapes `%` and `_` so they're matched as text, not wildcards.

@@ -10,3 +10,6 @@ data/*.sqlite-journal
 data/*.sqlite-wal
 data/*.sqlite-shm
 .DS_Store
+
+# Local secrets for `wrangler dev`
+.dev.vars
