@@ -24,4 +24,4 @@ enabled = true
 [[d1_databases]]
 binding = "DB"
 database_name = "finance-monitor"
-database_id = "PASTE_YOUR_DATABASE_ID_HERE"
+database_id = "c901be67-76c3-4ff9-9b81-d185b9a6eed1"
