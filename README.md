@@ -66,6 +66,31 @@ Wrangler prints the live URL, something like
 `https://finance-monitor.<your-subdomain>.workers.dev`. The schema applies itself
 on the first request, so there is no migration step.
 
+### Or deploy from the Cloudflare dashboard, without a terminal
+
+Workers &amp; Pages → Create → **Import a repository** builds and deploys on every
+push. Two things it cannot do for you, and the deploy fails at the last step
+until both are done:
+
+**1. Create the database and commit its id.** In the dashboard, Storage &amp;
+Databases → D1 SQL Database → Create, name it `finance-monitor`. Open it and copy
+the **Database ID**. Then edit `wrangler.toml` (GitHub's web editor is fine),
+replace `PASTE_YOUR_DATABASE_ID_HERE` with that id, and commit. The id is not a
+secret — it belongs in the repo.
+
+**2. Add the session secret.** On the Worker: Settings → Variables and Secrets →
+Add → type **Secret**, name `SESSION_SECRET`, value a long random string.
+
+Then hit **Retry build**. The build settings it detects are already correct:
+
+| Setting | Value |
+|---|---|
+| Build command | `npm run build` |
+| Deploy command | `npx wrangler deploy` |
+| Root directory | `/` |
+
+Push to the branch after that and it redeploys itself.
+
 ### Open it and set your passphrase immediately
 
 The first visitor to a fresh deployment is the one who sets the passphrase — that
@@ -107,7 +132,7 @@ npx wrangler tail                         # live logs
 | `npm test` | 74 unit and integration tests |
 | `npm run typecheck` | `tsc --noEmit` across client, server and tests |
 | `npm run seed` | Sample data (`-- --reset` to replace what's there) |
-| `npm run deploy` | Build, then `wrangler deploy` |
+| `npm run deploy` | Check the config, build, then `wrangler deploy` |
 
 ## How it's put together
 
@@ -168,6 +193,17 @@ against the surface it's drawn on — in dark mode and light.
 Money in is teal and money out is amber, deliberately not green and red: that pair
 is the single worst choice for colour blindness. Direction is also carried by an
 arrow and a sign, so colour is never the only channel.
+
+## When a deployment is wrong
+
+Two mistakes are easy to make and both used to fail unhelpfully. Now:
+
+- **An unfilled `database_id`** stops `npm run deploy` before it starts, and prints
+  the four commands to fix it. `npm run build` warns about the same thing without
+  failing, so a local build still works.
+- **A missing `SESSION_SECRET` or binding** makes every route answer `503` with
+  plain text naming what is missing and what to run — rather than the Worker
+  throwing an exception, which tells you nothing.
 
 ## What isn't built yet
 
