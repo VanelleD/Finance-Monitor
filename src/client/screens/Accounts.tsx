@@ -138,7 +138,7 @@ export function Accounts({ snapshot, onChanged }: { snapshot: Snapshot; onChange
                 <p className="tile__figure num figure">{formatCents(balanceOf(account))}</p>
 
                 <Button variant="dashed" icon="pencil" onClick={() => setBalanceFor(account)}>
-                  Set balance
+                  Edit balance
                 </Button>
               </div>
             ))}

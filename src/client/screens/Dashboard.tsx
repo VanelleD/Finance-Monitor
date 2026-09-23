@@ -10,6 +10,8 @@ import { COLOR, directionColor, percent, targetKind } from "../lib/present.js";
 import { Card, CardHead, Delta, Empty, Meter, StatusChip, Swatch } from "../components/ui.js";
 import { FlowColumns, MagnitudeBars, Sparkline } from "../components/charts.js";
 import { DueTray } from "../components/DueTray.js";
+import { Greeting } from "../components/Greeting.js";
+import { insightsFor } from "@shared/insights.js";
 
 export function Dashboard({
   snapshot, month, due, onAdd, onGoTo, onEditEntry, onChanged,
@@ -63,8 +65,21 @@ export function Dashboard({
 
   const worthDelta = trend.length >= 2 ? worth - (trend[trend.length - 2] ?? worth) : 0;
 
+  const insights = insightsFor({
+    today: snapshot.today,
+    entries: snapshot.entries,
+    accounts,
+    balances: snapshot.balances,
+    liabilities,
+    targets,
+    categories,
+    due,
+  });
+
   return (
     <>
+      <Greeting insights={insights} today={snapshot.today} />
+
       <DueTray due={due} onChanged={onChanged} />
 
       <div className="grid-hero">

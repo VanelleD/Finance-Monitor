@@ -95,7 +95,7 @@ export function AccountDialog({
             error={errors.openingCents}
             hint={
               editing
-                ? "Entries are added to this. To correct today's balance, use Set balance instead."
+                ? "Entries are added to this. To correct today's balance, use Edit balance instead."
                 : "Entries you add later are counted on top of this."
             }
             onChange={(event) => setOpening(event.target.value)}
@@ -137,7 +137,7 @@ export function SetBalanceDialog({
       onSaved();
       onClose();
     } catch (failure) {
-      setError(failure instanceof ApiError ? failure.message : "Couldn't set that balance.");
+      setError(failure instanceof ApiError ? failure.message : "Couldn't save that balance.");
     } finally {
       setSaving(false);
     }
@@ -145,14 +145,14 @@ export function SetBalanceDialog({
 
   return (
     <Modal
-      title={`Set ${account.name} balance`}
+      title={`Edit ${account.name} balance`}
       onClose={onClose}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <span className="spacer" />
           <Button variant="primary" icon="check" onClick={() => void save()} disabled={saving}>
-            {saving ? "Saving…" : "Set balance"}
+            {saving ? "Saving…" : "Edit balance"}
           </Button>
         </>
       }

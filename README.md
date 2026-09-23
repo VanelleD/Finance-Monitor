@@ -13,7 +13,7 @@ the maths don't change between them.
 
 | Screen | What's on it |
 |---|---|
-| **Dashboard** | Net worth, money in vs out for the month, where it went by category, recent activity, target progress |
+| **Dashboard** | A greeting and what your numbers say right now, anything due, net worth, money in vs out, where it went, recent activity, target progress |
 | **Transactions** | The full ledger, filterable by direction, category, money source and free text, with CSV export |
 | **Accounts** | Every account with its live balance and a *Set balance* correction; every debt — cards, buy-now-pay-later, loans, money owed to a person or an app; recurring rules; income sources |
 | **Net worth** | Assets and liabilities side by side, a shared-scale composition bar, and which debt costs most to carry |
@@ -212,6 +212,23 @@ against the surface it's drawn on — in dark mode and light.
 Money in is teal and money out is amber, deliberately not green and red: that pair
 is the single worst choice for colour blindness. Direction is also carried by an
 arrow and a sign, so colour is never the only channel.
+
+## The greeting, and why it needs no AI
+
+The dashboard opens with the time of day and two or three observations drawn
+from the ledger: a cap running out with the days left to judge it by, a minimum
+payment landing in two days, an account down to under a week of spending, which
+debt costs the most to carry, whether the savings rate moved.
+
+All of it is computed in `src/shared/insights.ts` — a pure module, the same input
+always giving the same output, covered by its own tests. Nothing is sent
+anywhere to produce it, it cannot invent a number, and it costs nothing to run.
+Every line quotes a figure that came out of your own data.
+
+That is deliberate. Most of what a "financial advisor" feature would tell you is
+arithmetic you already have, and arithmetic should not be probabilistic. An LLM
+earns its place on the open-ended question — *should I clear the card or top up
+savings first?* — not on reading a number off a table.
 
 ## When a deployment is wrong
 
