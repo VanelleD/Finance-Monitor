@@ -4,7 +4,17 @@ export type Direction = "in" | "out" | "transfer";
 
 export type AccountKind = "checking" | "savings" | "cash" | "brokerage" | "credit_card";
 export type AssetKind = "cash" | "investment" | "property" | "vehicle" | "other";
-export type LiabilityKind = "credit_card" | "loan" | "mortgage" | "other";
+export type LiabilityKind =
+  | "credit_card"
+  | "bnpl"
+  | "loan"
+  | "mortgage"
+  | "line_of_credit"
+  | "person"
+  | "other";
+
+/** How often a recurring rule fires. */
+export type Cadence = "weekly" | "biweekly" | "monthly";
 export type TargetKind = "save_to" | "pay_off" | "spend_under" | "net_worth";
 
 export interface Account {
@@ -46,6 +56,49 @@ export interface Entry {
   /** Optional target this entry counts toward. */
   targetId: string | null;
   repeatRule: "monthly" | "weekly" | "yearly" | null;
+  /**
+   * True when this entry exists only to make a stated balance true. It moves the
+   * account balance but is neither income nor spending, so cash flow ignores it.
+   */
+  isAdjustment: boolean;
+  /** The recurring rule that produced this entry, if any. */
+  scheduleId: string | null;
+}
+
+/**
+ * A recurring movement of money: a paycheque, a standing transfer, a bill.
+ *
+ * `amountCents` is null when the amount varies — then the occurrence still comes
+ * due, but it waits for you to type the figure rather than inventing one.
+ */
+export interface Schedule {
+  id: string;
+  name: string;
+  direction: Direction;
+  amountCents: number | null;
+  cadence: Cadence;
+  /** The first occurrence. Every later one is counted from here, never from the last. */
+  anchorDate: string;
+  nextDue: string;
+  /** True for transfers the bank makes by itself, which need no confirmation. */
+  autoPost: boolean;
+  payee: string;
+  reason: string;
+  accountId: string | null;
+  toAccountId: string | null;
+  categoryId: string | null;
+  sourceId: string | null;
+  targetId: string | null;
+  liabilityId: string | null;
+  archived: boolean;
+}
+
+/** One occurrence of a schedule that is due but has not been recorded yet. */
+export interface DueOccurrence {
+  schedule: Schedule;
+  occurredOn: string;
+  /** Null when the schedule's amount varies and needs typing in. */
+  amountCents: number | null;
 }
 
 export interface Asset {

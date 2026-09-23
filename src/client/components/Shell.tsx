@@ -4,11 +4,12 @@ import type { ReactNode } from "react";
 import { Icon, type IconName } from "../lib/icons.js";
 import { IconButton } from "./ui.js";
 
-export type Route = "dashboard" | "ledger" | "worth" | "targets";
+export type Route = "dashboard" | "ledger" | "accounts" | "worth" | "targets";
 
 export const ROUTES: Array<{ route: Route; path: string; label: string; short: string; icon: IconName }> = [
   { route: "dashboard", path: "/", label: "Dashboard", short: "Home", icon: "grid" },
   { route: "ledger", path: "/ledger", label: "Transactions", short: "Ledger", icon: "flow" },
+  { route: "accounts", path: "/accounts", label: "Accounts", short: "Accounts", icon: "wallet" },
   { route: "worth", path: "/worth", label: "Net worth", short: "Worth", icon: "scale" },
   { route: "targets", path: "/targets", label: "Targets", short: "Targets", icon: "target" },
 ];

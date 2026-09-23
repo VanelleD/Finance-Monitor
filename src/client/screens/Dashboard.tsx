@@ -1,7 +1,7 @@
-import type { Entry } from "@shared/types.js";
+import type { DueOccurrence, Entry } from "@shared/types.js";
 import {
-  categoryTotals, flowForMonth, flowSeries, netWorthCents, netWorthTrend,
-  targetProgress, totalAssetsCents, totalLiabilitiesCents, withOther,
+  categoryTotals, flowForMonth, flowSeries, netWorthFrom, netWorthTrend, ownedCents,
+  targetProgress, totalLiabilitiesCents, withOther,
 } from "@shared/derive.js";
 import { formatCents } from "@shared/money.js";
 import { formatDate, formatMonth, monthsEnding } from "@shared/dates.js";
@@ -9,19 +9,23 @@ import type { Snapshot } from "../lib/api.js";
 import { COLOR, directionColor, percent, targetKind } from "../lib/present.js";
 import { Card, CardHead, Delta, Empty, Meter, StatusChip, Swatch } from "../components/ui.js";
 import { FlowColumns, MagnitudeBars, Sparkline } from "../components/charts.js";
+import { DueTray } from "../components/DueTray.js";
 
 export function Dashboard({
-  snapshot, month, onAdd, onGoTo, onEditEntry,
+  snapshot, month, due, onAdd, onGoTo, onEditEntry, onChanged,
 }: {
   snapshot: Snapshot;
   month: string;
+  due: DueOccurrence[];
   onAdd: () => void;
-  onGoTo: (route: "ledger" | "worth" | "targets") => void;
+  onGoTo: (route: "ledger" | "accounts" | "worth" | "targets") => void;
   onEditEntry: (entry: Entry) => void;
+  onChanged: () => void;
 }) {
   const { entries, assets, liabilities, targets, categories, accounts } = snapshot;
 
-  const worth = netWorthCents(assets, liabilities);
+  const worth = netWorthFrom({ accounts, balances: snapshot.balances, assets, liabilities });
+  const owned = ownedCents(accounts, snapshot.balances, assets);
   const months = monthsEnding(month, 6);
   const flows = flowSeries(entries, months);
   const flow = flowForMonth(entries, month);
@@ -43,7 +47,8 @@ export function Dashboard({
   ];
 
   const liveTargets = targets.filter((t) => !t.archived).slice(0, 3);
-  const hasData = entries.length > 0 || assets.length > 0 || liabilities.length > 0;
+  const hasData =
+    entries.length > 0 || assets.length > 0 || liabilities.length > 0 || accounts.length > 0;
 
   if (!hasData) {
     return (
@@ -60,6 +65,8 @@ export function Dashboard({
 
   return (
     <>
+      <DueTray due={due} onChanged={onChanged} />
+
       <div className="grid-hero">
         <Card>
           <div className="stack" style={{ height: "100%" }}>
@@ -81,9 +88,9 @@ export function Dashboard({
                 <span className="tiny muted">No change since last month</span>
               )}
               <span className="tiny muted">
-                {totalAssetsCents(assets) > 0
-                  ? `${formatCents(totalAssetsCents(assets), { whole: true })} owned, ${formatCents(totalLiabilitiesCents(liabilities), { whole: true })} owed`
-                  : "Add what you own to make this exact"}
+                {owned > 0
+                  ? `${formatCents(owned, { whole: true })} owned, ${formatCents(totalLiabilitiesCents(liabilities), { whole: true })} owed`
+                  : "Add an account to make this exact"}
               </span>
             </div>
 
@@ -257,7 +264,11 @@ export function Dashboard({
           {liveTargets.length > 0 ? (
             <div className="stack stack--gap-16">
               {liveTargets.map((target) => {
-                const progress = targetProgress(target, { ...snapshot, today: snapshot.today });
+                const progress = targetProgress(target, {
+                  ...snapshot,
+                  balances: snapshot.balances,
+                  today: snapshot.today,
+                });
                 const { color } = targetKind(target.kind);
                 return (
                   <div className="stack stack--gap-8" key={target.id}>

@@ -83,8 +83,11 @@ export function assetIcon(kind: AssetKind): IconName {
 
 const LIABILITY_ICONS: Record<LiabilityKind, IconName> = {
   credit_card: "card",
+  bnpl: "repeat",
   loan: "bank",
   mortgage: "home",
+  line_of_credit: "card",
+  person: "note",
   other: "tag",
 };
 
@@ -102,10 +105,40 @@ export const ASSET_KIND_LABELS: Record<AssetKind, string> = {
 
 export const LIABILITY_KIND_LABELS: Record<LiabilityKind, string> = {
   credit_card: "Credit card",
+  bnpl: "Buy now, pay later",
   loan: "Loan",
   mortgage: "Mortgage",
+  line_of_credit: "Line of credit",
+  person: "Owed to a person or app",
   other: "Other",
 };
+
+export const CADENCE_LABELS = {
+  weekly: "Every week",
+  biweekly: "Every two weeks",
+  monthly: "Every month",
+} as const;
+
+/** "That is about $217 a month" — the figure that makes two cadences comparable. */
+export function monthlyHint(amountCents: number, cadence: keyof typeof CADENCE_LABELS): string {
+  const perMonth =
+    cadence === "weekly"
+      ? Math.round((amountCents * 52) / 12)
+      : cadence === "biweekly"
+        ? Math.round((amountCents * 26) / 12)
+        : amountCents;
+  const dollars = (perMonth / 100).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return cadence === "monthly" ? "" : `About $${dollars} a month.`;
+}
+
+export const CADENCE_SHORT = {
+  weekly: "weekly",
+  biweekly: "every 2 weeks",
+  monthly: "monthly",
+} as const;
 
 export const ACCOUNT_KIND_LABELS = {
   checking: "Checking",

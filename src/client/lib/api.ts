@@ -1,7 +1,7 @@
 /** Thin fetch wrapper. Everything goes through `request`, so errors behave the same everywhere. */
 
 import type {
-  Account, Asset, Category, Entry, Liability, Source, Target,
+  Account, Asset, Category, Entry, Liability, Schedule, Source, Target,
 } from "@shared/types.js";
 
 export class ApiError extends Error {
@@ -61,7 +61,10 @@ export interface Snapshot {
   assets: Asset[];
   liabilities: Liability[];
   targets: Target[];
+  schedules: Schedule[];
   entries: Entry[];
+  /** Each account's balance, derived server-side from the full ledger. */
+  balances: Record<string, number>;
 }
 
 export interface EntryQuery {
@@ -101,6 +104,14 @@ export const api = {
   deleteEntry: (id: string) => remove(`/entries/${id}`),
 
   createAccount: (input: Omit<Account, "id">) => post<Account>("/accounts", input),
+  updateAccount: (id: string, input: Partial<Omit<Account, "id">>) => patch(`/accounts/${id}`, input),
+  deleteAccount: (id: string) => remove(`/accounts/${id}`),
+  /** State what an account really holds; the server records the difference. */
+  setBalance: (id: string, balanceCents: number, occurredOn?: string) =>
+    post<{ ok: true; adjusted: boolean; deltaCents?: number; balanceCents: number }>(
+      `/accounts/${id}/balance`,
+      { balanceCents, occurredOn },
+    ),
   createSource: (name: string) => post<Source>("/sources", { name }),
   createCategory: (input: Omit<Category, "id">) => post<Category>("/categories", input),
 
@@ -111,6 +122,17 @@ export const api = {
   createLiability: (input: Omit<Liability, "id">) => post<Liability>("/liabilities", input),
   updateLiability: (id: string, input: Partial<Omit<Liability, "id">>) => patch(`/liabilities/${id}`, input),
   deleteLiability: (id: string) => remove(`/liabilities/${id}`),
+
+  createSchedule: (input: Omit<Schedule, "id" | "nextDue"> & { nextDue?: string }) =>
+    post<Schedule>("/schedules", input),
+  updateSchedule: (id: string, input: Partial<Omit<Schedule, "id">>) => patch(`/schedules/${id}`, input),
+  deleteSchedule: (id: string) => remove(`/schedules/${id}`),
+  skipSchedule: (id: string) => post<{ ok: true; nextDue: string }>(`/schedules/${id}/skip`, {}),
+  postDue: (occurrences?: Array<{ scheduleId: string; occurredOn: string; amountCents?: number }>) =>
+    post<{ postedCount: number; skipped: Array<{ scheduleId: string; reason: string }> }>(
+      "/schedules/post-due",
+      occurrences ? { occurrences } : {},
+    ),
 
   createTarget: (input: Omit<Target, "id">) => post<Target>("/targets", input),
   updateTarget: (id: string, input: Partial<Omit<Target, "id">>) => patch(`/targets/${id}`, input),

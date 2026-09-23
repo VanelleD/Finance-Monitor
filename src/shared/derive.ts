@@ -8,9 +8,10 @@
  */
 
 import type {
-  Account, Asset, Entry, Liability, MonthFlow, Target, TargetProgress, TargetStatus,
+  Account, Asset, Cadence, DueOccurrence, Entry, Liability, MonthFlow, Schedule,
+  Target, TargetProgress, TargetStatus,
 } from "./types.js";
-import { monthOf, monthsUntil, addMonths } from "./dates.js";
+import { addDays, addMonths, addMonthsToDate, monthOf, monthsUntil } from "./dates.js";
 
 /**
  * How full a monthly spending cap has to be before it is flagged.
@@ -19,11 +20,41 @@ import { monthOf, monthsUntil, addMonths } from "./dates.js";
  */
 export const SPEND_CAP_WARNING = 0.75;
 
-/** Assets minus liabilities. */
+/** Assets minus liabilities, where the assets are already a plain list of values. */
 export function netWorthCents(assets: Asset[], liabilities: Liability[]): number {
   const owned = sum(assets.filter(live).map((a) => a.valueCents));
   const owed = sum(liabilities.filter(live).map((l) => l.balanceCents));
   return owned - owed;
+}
+
+/**
+ * Everything owned, counting each account's live balance.
+ *
+ * An account is itself a thing you own, so its balance counts directly. An asset
+ * carrying an `accountId` is that same money written down a second time — the
+ * account balance supersedes it and the asset row is skipped, so correcting a
+ * balance never leaves a stale duplicate inflating net worth.
+ */
+export function ownedCents(
+  accounts: Account[],
+  balances: Record<string, number>,
+  assets: Asset[],
+): number {
+  const inAccounts = sum(accounts.filter(live).map((a) => balances[a.id] ?? a.openingCents));
+  const standalone = sum(
+    assets.filter(live).filter((a) => a.accountId === null).map((a) => a.valueCents),
+  );
+  return inAccounts + standalone;
+}
+
+/** Net worth from live account balances plus anything owned outside an account. */
+export function netWorthFrom(input: {
+  accounts: Account[];
+  balances: Record<string, number>;
+  assets: Asset[];
+  liabilities: Liability[];
+}): number {
+  return ownedCents(input.accounts, input.balances, input.assets) - totalLiabilitiesCents(input.liabilities);
 }
 
 export function totalAssetsCents(assets: Asset[]): number {
@@ -37,15 +68,19 @@ export function totalLiabilitiesCents(liabilities: Liability[]): number {
 /**
  * Money in and out for one month.
  *
- * Transfers are deliberately excluded from both sides. Moving $600 from checking
- * into savings is not income and not spending; counting it either way would
- * corrupt the savings rate, which is the whole point of tracking this.
+ * Two kinds of entry are deliberately excluded from both sides:
+ *
+ * - Transfers. Moving $600 from checking into savings is not income and not
+ *   spending; counting it either way would corrupt the savings rate.
+ * - Balance adjustments. Correcting an account to match what the bank says moves
+ *   the balance, but no money was earned or spent to make it happen.
  */
 export function flowForMonth(entries: Entry[], month: string): MonthFlow {
   let inCents = 0;
   let outCents = 0;
   for (const e of entries) {
     if (monthOf(e.occurredOn) !== month) continue;
+    if (e.isAdjustment) continue;
     if (e.direction === "in") inCents += e.amountCents;
     else if (e.direction === "out") outCents += e.amountCents;
   }
@@ -72,6 +107,7 @@ export function categoryTotals(
   const totals = new Map<string | null, number>();
   for (const e of entries) {
     if (e.direction !== direction) continue;
+    if (e.isAdjustment) continue;
     if (monthOf(e.occurredOn) !== month) continue;
     totals.set(e.categoryId, (totals.get(e.categoryId) ?? 0) + e.amountCents);
   }
@@ -116,6 +152,12 @@ export interface ProgressContext {
   assets: Asset[];
   liabilities: Liability[];
   accounts: Account[];
+  /**
+   * Balances worked out from the whole ledger, not the months loaded on screen.
+   * Recomputing from `entries` here would undercount an account whose history
+   * runs deeper than the window the client is holding.
+   */
+  balances?: Record<string, number>;
   /** Today, as YYYY-MM-DD. Passed in so results are deterministic and testable. */
   today: string;
 }
@@ -148,7 +190,14 @@ export function targetProgress(target: Target, ctx: ProgressContext): TargetProg
       currentCents = spentInCategory(target, ctx, thisMonth);
       break;
     case "net_worth":
-      currentCents = netWorthCents(ctx.assets, ctx.liabilities);
+      currentCents = ctx.balances
+        ? netWorthFrom({
+            accounts: ctx.accounts,
+            balances: ctx.balances,
+            assets: ctx.assets,
+            liabilities: ctx.liabilities,
+          })
+        : netWorthCents(ctx.assets, ctx.liabilities);
       break;
   }
 
@@ -207,7 +256,10 @@ function statusFor(
  */
 function savedToward(target: Target, ctx: ProgressContext): number {
   const account = ctx.accounts.find((a) => a.id === target.accountId);
-  if (account) return accountBalanceCents(account, ctx.entries, ctx.today);
+  if (account) {
+    const known = ctx.balances?.[account.id];
+    return known ?? accountBalanceCents(account, ctx.entries, ctx.today);
+  }
 
   const tagged = ctx.entries.filter((e) => e.targetId === target.id);
   if (tagged.length > 0) return sum(tagged.map(contributionOf));
@@ -300,4 +352,82 @@ function live(x: { archived: boolean }): boolean {
 
 function sum(numbers: number[]): number {
   return numbers.reduce((total, n) => total + n, 0);
+}
+
+/* -------------------------- recurring money movements ---------------------- */
+
+/**
+ * The date of the nth occurrence of a schedule.
+ *
+ * Always computed from the anchor, never from the previous occurrence. Stepping
+ * forward one at a time would let a clamped month drift: a rule anchored on the
+ * 31st would land on the 28th in February and then stay on the 28th forever.
+ */
+export function occurrenceDate(anchorDate: string, cadence: Cadence, index: number): string {
+  switch (cadence) {
+    case "weekly":
+      return addDays(anchorDate, 7 * index);
+    case "biweekly":
+      return addDays(anchorDate, 14 * index);
+    case "monthly":
+      return addMonthsToDate(anchorDate, index);
+  }
+}
+
+/** Guards against a malformed anchor turning the walk below into a hang. */
+const MAX_LOOKAHEAD = 2000;
+
+/**
+ * Every occurrence that has come due but not yet been recorded: on or after the
+ * schedule's `nextDue`, and on or before today. Nothing in the future is posted,
+ * so the ledger never claims money moved before it did.
+ */
+export function dueOccurrences(
+  schedule: Schedule,
+  today: string,
+  limit = 120,
+): DueOccurrence[] {
+  if (schedule.archived) return [];
+
+  const due: DueOccurrence[] = [];
+  for (let index = 0; index < MAX_LOOKAHEAD && due.length < limit; index++) {
+    const occurredOn = occurrenceDate(schedule.anchorDate, schedule.cadence, index);
+    if (occurredOn > today) break;
+    if (occurredOn < schedule.nextDue) continue;
+    due.push({ schedule, occurredOn, amountCents: schedule.amountCents });
+  }
+  return due;
+}
+
+/** The first occurrence strictly after `date` — where `nextDue` moves once one is posted. */
+export function nextDueAfter(schedule: Schedule, date: string): string {
+  for (let index = 0; index < MAX_LOOKAHEAD; index++) {
+    const occurredOn = occurrenceDate(schedule.anchorDate, schedule.cadence, index);
+    if (occurredOn > date) return occurredOn;
+  }
+  return date;
+}
+
+/** Everything due across every schedule, oldest first. */
+export function allDue(schedules: Schedule[], today: string): DueOccurrence[] {
+  return schedules
+    .flatMap((schedule) => dueOccurrences(schedule, today))
+    .sort((a, b) => a.occurredOn.localeCompare(b.occurredOn));
+}
+
+/**
+ * What a schedule costs or brings in per month, for comparing rules against a
+ * budget. A variable-amount rule contributes nothing, because its amount is
+ * genuinely unknown until it happens.
+ */
+export function monthlyEquivalentCents(schedule: Schedule): number {
+  if (schedule.amountCents === null) return 0;
+  switch (schedule.cadence) {
+    case "weekly":
+      return Math.round((schedule.amountCents * 52) / 12);
+    case "biweekly":
+      return Math.round((schedule.amountCents * 26) / 12);
+    case "monthly":
+      return schedule.amountCents;
+  }
 }

@@ -32,6 +32,8 @@ export const entryInput = z
     sourceId: optionalId,
     targetId: optionalId,
     repeatRule: z.enum(["weekly", "monthly", "yearly"]).nullable().default(null),
+    isAdjustment: z.boolean().default(false),
+    scheduleId: optionalId,
   })
   .superRefine((value, ctx) => {
     if (value.direction === "transfer") {
@@ -72,7 +74,7 @@ export const assetInput = z.object({
 
 export const liabilityInput = z.object({
   name: z.string().trim().min(1).max(120),
-  kind: z.enum(["credit_card", "loan", "mortgage", "other"]),
+  kind: z.enum(["credit_card", "bnpl", "loan", "mortgage", "line_of_credit", "person", "other"]),
   balanceCents: cents,
   aprBps: z.number().int().min(0).max(100_000).nullable().default(null),
   minPaymentCents: cents.nullable().default(null),
@@ -104,6 +106,60 @@ export const targetInput = z
 export const assetPatch = assetInput.partial();
 export const liabilityPatch = liabilityInput.partial();
 export const targetPatch = targetInput.innerType().partial();
+
+export const scheduleInput = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    direction: z.enum(["in", "out", "transfer"]),
+    /** Null means the amount varies and is typed in when the occurrence is posted. */
+    amountCents: positiveCents.nullable().default(null),
+    cadence: z.enum(["weekly", "biweekly", "monthly"]),
+    anchorDate: isoDate,
+    nextDue: isoDate.optional(),
+    autoPost: z.boolean().default(false),
+    payee: z.string().trim().max(200).default(""),
+    reason: z.string().trim().max(1000).default(""),
+    accountId: optionalId,
+    toAccountId: optionalId,
+    categoryId: optionalId,
+    sourceId: optionalId,
+    targetId: optionalId,
+    liabilityId: optionalId,
+    archived: z.boolean().default(false),
+  })
+  .superRefine((value, ctx) => {
+    if (value.direction === "transfer") {
+      if (!value.toAccountId) {
+        ctx.addIssue({ code: "custom", path: ["toAccountId"], message: "A transfer needs a destination account." });
+      } else if (value.toAccountId === value.accountId) {
+        ctx.addIssue({ code: "custom", path: ["toAccountId"], message: "A transfer must move between two different accounts." });
+      }
+    }
+    // An auto-posting rule has to know what to post without asking.
+    if (value.autoPost && value.amountCents === null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["autoPost"],
+        message: "A rule can only post by itself if its amount is fixed.",
+      });
+    }
+  });
+
+export const schedulePatch = scheduleInput.innerType().partial();
+
+/** Correcting an account to match what the bank actually says. */
+export const setBalanceInput = z.object({
+  balanceCents: z.number().int().min(-MAX_CENTS).max(MAX_CENTS),
+  occurredOn: isoDate.optional(),
+});
+
+export const postDueInput = z.object({
+  /** Which occurrences to record; omitted means every one that auto-posts. */
+  occurrences: z
+    .array(z.object({ scheduleId: id, occurredOn: isoDate, amountCents: positiveCents.optional() }))
+    .max(200)
+    .optional(),
+});
 
 export const derivedKeyInput = z.object({
   derivedKey: z.string().min(40).max(128),

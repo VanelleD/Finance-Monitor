@@ -100,6 +100,8 @@ export function EntryDialog({
       sourceId: direction === "in" ? sourceId || null : null,
       targetId: targetId || null,
       repeatRule: repeats ? ("monthly" as const) : null,
+      isAdjustment: false,
+      scheduleId: entry?.scheduleId ?? null,
     };
 
     setSaving(true);

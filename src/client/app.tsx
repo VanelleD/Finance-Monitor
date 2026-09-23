@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Entry } from "@shared/types.js";
 import { currentMonth } from "@shared/dates.js";
+import { allDue } from "@shared/derive.js";
 import { api, ApiError, type Snapshot } from "./lib/api.js";
 import { Shell, TopBar, ROUTES, type Route } from "./components/Shell.js";
 import { Banner, Button, Card, IconButton, MonthNav, Spinner } from "./components/ui.js";
@@ -11,6 +12,7 @@ import { Dashboard } from "./screens/Dashboard.js";
 import { Ledger } from "./screens/Ledger.js";
 import { NetWorth } from "./screens/NetWorth.js";
 import { Targets } from "./screens/Targets.js";
+import { Accounts } from "./screens/Accounts.js";
 
 type Theme = "dark" | "light";
 type AuthState = { configured: boolean; authenticated: boolean } | null;
@@ -36,6 +38,9 @@ export function App() {
 
   const [entryDialog, setEntryDialog] = useState<Entry | "new" | null>(null);
   const [accountDialog, setAccountDialog] = useState(false);
+
+  /** Rules that record themselves are caught up once per sign-in, not per render. */
+  const caughtUp = useRef(false);
 
   /* -------------------------------- theme -------------------------------- */
 
@@ -92,9 +97,23 @@ export function App() {
     if (auth?.authenticated) void reload(month);
   }, [auth?.authenticated, month, reload]);
 
+  // Post anything the bank does by itself, then show the result.
+  useEffect(() => {
+    if (!auth?.authenticated || snapshot === null || caughtUp.current) return;
+    caughtUp.current = true;
+    void api
+      .postDue()
+      .then((result) => {
+        if (result.postedCount > 0) return reload(month);
+        return undefined;
+      })
+      .catch(() => undefined); // never block the app on catch-up
+  }, [auth?.authenticated, snapshot, month, reload]);
+
   const refresh = useCallback(() => void reload(month), [reload, month]);
 
   async function signOut() {
+    caughtUp.current = false;
     await api.logout().catch(() => undefined);
     setSnapshot(null);
     setAuth({ configured: true, authenticated: false });
@@ -142,7 +161,7 @@ export function App() {
           {showMonthNav ? <MonthNav month={month} onChange={setMonth} /> : null}
           {route === "worth" ? (
             <Button variant="outline" icon="plus" onClick={() => setAccountDialog(true)}>
-              Add money source
+              Add account
             </Button>
           ) : null}
           <span className="hide-mobile">
@@ -187,11 +206,15 @@ export function App() {
                 <Dashboard
                   snapshot={snapshot}
                   month={month}
+                  due={allDue(snapshot.schedules, snapshot.today)}
                   onAdd={() => setEntryDialog("new")}
                   onGoTo={navigate}
                   onEditEntry={setEntryDialog}
+                  onChanged={refresh}
                 />
               ) : null}
+
+              {route === "accounts" ? <Accounts snapshot={snapshot} onChanged={refresh} /> : null}
 
               {route === "ledger" ? (
                 <Ledger

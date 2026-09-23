@@ -2,7 +2,7 @@
 
 import type { Db, Row } from "./driver.js";
 import type {
-  Account, Asset, Category, Entry, Liability, Source, Target,
+  Account, Asset, Category, Entry, Liability, Schedule, Source, Target,
 } from "../../shared/types.js";
 
 export function newId(prefix: string): string {
@@ -52,6 +52,28 @@ const toEntry = (r: Row): Entry => ({
   sourceId: nullableStr(r.source_id),
   targetId: nullableStr(r.target_id),
   repeatRule: nullableStr(r.repeat_rule) as Entry["repeatRule"],
+  isAdjustment: bool(r.is_adjustment),
+  scheduleId: nullableStr(r.schedule_id),
+});
+
+const toSchedule = (r: Row): Schedule => ({
+  id: str(r.id),
+  name: str(r.name),
+  direction: str(r.direction) as Schedule["direction"],
+  amountCents: nullableNum(r.amount_cents),
+  cadence: str(r.cadence) as Schedule["cadence"],
+  anchorDate: str(r.anchor_date),
+  nextDue: str(r.next_due),
+  autoPost: bool(r.auto_post),
+  payee: str(r.payee),
+  reason: str(r.reason),
+  accountId: nullableStr(r.account_id),
+  toAccountId: nullableStr(r.to_account_id),
+  categoryId: nullableStr(r.category_id),
+  sourceId: nullableStr(r.source_id),
+  targetId: nullableStr(r.target_id),
+  liabilityId: nullableStr(r.liability_id),
+  archived: bool(r.archived),
 });
 
 const toAsset = (r: Row): Asset => ({
@@ -107,6 +129,12 @@ export const listLiabilities = (db: Db) =>
 
 export const listTargets = (db: Db) =>
   db.all(`SELECT * FROM targets ORDER BY archived, created_at`).then((rs) => rs.map(toTarget));
+
+export const listSchedules = (db: Db) =>
+  db.all(`SELECT * FROM schedules ORDER BY archived, next_due`).then((rs) => rs.map(toSchedule));
+
+export const getSchedule = (db: Db, id: string) =>
+  db.get(`SELECT * FROM schedules WHERE id = ?`, [id]).then((r) => (r ? toSchedule(r) : undefined));
 
 export const getEntry = (db: Db, id: string) =>
   db.get(`SELECT * FROM entries WHERE id = ?`, [id]).then((r) => (r ? toEntry(r) : undefined));
@@ -195,12 +223,12 @@ export async function createEntry(db: Db, input: NewEntry): Promise<Entry> {
     `INSERT INTO entries (
        id, direction, amount_cents, occurred_on, payee, reason,
        account_id, to_account_id, category_id, source_id, target_id, repeat_rule,
-       created_at, updated_at
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       created_at, updated_at, is_adjustment, schedule_id
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       id, input.direction, input.amountCents, input.occurredOn, input.payee, input.reason,
       input.accountId, input.toAccountId, input.categoryId, input.sourceId, input.targetId,
-      input.repeatRule, at, at,
+      input.repeatRule, at, at, input.isAdjustment ? 1 : 0, input.scheduleId,
     ],
   );
   return { id, ...input };
@@ -218,6 +246,8 @@ const ENTRY_COLUMNS: Record<keyof NewEntry, string> = {
   sourceId: "source_id",
   targetId: "target_id",
   repeatRule: "repeat_rule",
+  isAdjustment: "is_adjustment",
+  scheduleId: "schedule_id",
 };
 
 export async function updateEntry(db: Db, id: string, patch: Partial<NewEntry>): Promise<Entry | undefined> {
@@ -248,6 +278,53 @@ export async function createAccount(db: Db, input: Omit<Account, "id">): Promise
     [id, input.name, input.kind, input.currency, input.openingCents, input.archived ? 1 : 0, nowISO()],
   );
   return { id, ...input };
+}
+
+export async function updateAccount(db: Db, id: string, patch: Partial<Omit<Account, "id">>): Promise<void> {
+  await patchRow(db, "accounts", {
+    name: "name", kind: "kind", currency: "currency",
+    openingCents: "opening_cents", archived: "archived",
+  }, id, patch);
+}
+
+export const getAccount = (db: Db, id: string) =>
+  db.get(`SELECT * FROM accounts WHERE id = ?`, [id]).then((r) => (r ? toAccount(r) : undefined));
+
+/** Entries touching an account, needed to work out its balance before correcting it. */
+export const entriesForAccount = (db: Db, accountId: string) =>
+  db
+    .all(`SELECT * FROM entries WHERE account_id = ? OR to_account_id = ?`, [accountId, accountId])
+    .then((rs) => rs.map(toEntry));
+
+export async function createSchedule(db: Db, input: Omit<Schedule, "id">): Promise<Schedule> {
+  const id = newId("sch");
+  await db.run(
+    `INSERT INTO schedules (id, name, direction, amount_cents, cadence, anchor_date, next_due,
+       auto_post, payee, reason, account_id, to_account_id, category_id, source_id, target_id,
+       liability_id, archived, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      id, input.name, input.direction, input.amountCents, input.cadence, input.anchorDate,
+      input.nextDue, input.autoPost ? 1 : 0, input.payee, input.reason, input.accountId,
+      input.toAccountId, input.categoryId, input.sourceId, input.targetId, input.liabilityId,
+      input.archived ? 1 : 0, nowISO(),
+    ],
+  );
+  return { id, ...input };
+}
+
+export async function updateSchedule(db: Db, id: string, patch: Partial<Omit<Schedule, "id">>): Promise<void> {
+  await patchRow(db, "schedules", {
+    name: "name", direction: "direction", amountCents: "amount_cents", cadence: "cadence",
+    anchorDate: "anchor_date", nextDue: "next_due", autoPost: "auto_post", payee: "payee",
+    reason: "reason", accountId: "account_id", toAccountId: "to_account_id",
+    categoryId: "category_id", sourceId: "source_id", targetId: "target_id",
+    liabilityId: "liability_id", archived: "archived",
+  }, id, patch);
+}
+
+export async function deleteSchedule(db: Db, id: string): Promise<void> {
+  await db.run(`DELETE FROM schedules WHERE id = ?`, [id]);
 }
 
 export async function createSource(db: Db, name: string): Promise<Source> {
@@ -325,7 +402,7 @@ export async function updateTarget(db: Db, id: string, patch: Partial<Omit<Targe
   await patchRow(db, "targets", columns, id, patch);
 }
 
-export async function deleteRow(db: Db, table: "assets" | "liabilities" | "targets" | "accounts" | "sources", id: string): Promise<void> {
+export async function deleteRow(db: Db, table: "assets" | "liabilities" | "targets" | "accounts" | "sources" | "schedules", id: string): Promise<void> {
   await db.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
 }
 

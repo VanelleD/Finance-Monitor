@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Asset, Liability } from "@shared/types.js";
 import {
-  byCarryingCost, netWorthCents, totalAssetsCents, totalLiabilitiesCents,
+  byCarryingCost, netWorthFrom, ownedCents, totalLiabilitiesCents,
 } from "@shared/derive.js";
 import { formatBps, formatCents } from "@shared/money.js";
 import { formatDate } from "@shared/dates.js";
@@ -16,18 +16,27 @@ export function NetWorth({ snapshot, onChanged }: { snapshot: Snapshot; onChange
   const [editingAsset, setEditingAsset] = useState<Asset | "new" | null>(null);
   const [editingLiability, setEditingLiability] = useState<Liability | "new" | null>(null);
 
+  const accounts = snapshot.accounts.filter((a) => !a.archived);
   const assets = snapshot.assets.filter((a) => !a.archived);
   const liabilities = snapshot.liabilities.filter((l) => !l.archived);
-  const owned = totalAssetsCents(assets);
+  const owned = ownedCents(accounts, snapshot.balances, assets);
   const owed = totalLiabilitiesCents(liabilities);
-  const worth = netWorthCents(assets, liabilities);
+  const worth = netWorthFrom({ accounts, balances: snapshot.balances, assets, liabilities });
 
   // Asset kinds collapse onto three colour slots, so the bar never needs a fourth hue.
   const grouped = new Map<string, Segment>();
-  for (const asset of assets) {
-    const { label, color } = assetGroup(asset.kind);
+  const add = (label: string, color: string, cents: number) => {
     const existing = grouped.get(label);
-    grouped.set(label, { label, color, cents: (existing?.cents ?? 0) + asset.valueCents });
+    grouped.set(label, { label, color, cents: (existing?.cents ?? 0) + cents });
+  };
+  for (const account of accounts) {
+    const { label, color } = assetGroup(account.kind === "brokerage" ? "investment" : "cash");
+    add(label, color, snapshot.balances[account.id] ?? account.openingCents);
+  }
+  // An asset tied to an account is that same money again, so it is left out.
+  for (const asset of assets.filter((a) => a.accountId === null)) {
+    const { label, color } = assetGroup(asset.kind);
+    add(label, color, asset.valueCents);
   }
   const segments = [...grouped.values()].sort((a, b) => b.cents - a.cents);
 

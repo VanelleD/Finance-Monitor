@@ -48,6 +48,33 @@ export function daysLeftInMonth(isoDate: string): number {
   return total - Number(isoDate.slice(8, 10)) + 1;
 }
 
+/** Shift an ISO date by whole days. */
+export function addDays(isoDate: string, n: number): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + n);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Shift an ISO date by whole months, clamping to the end of a short month:
+ * 31 January plus one month is 28 February, not 3 March.
+ */
+export function addMonthsToDate(isoDate: string, n: number): string {
+  const year = Number(isoDate.slice(0, 4));
+  const monthIndex = Number(isoDate.slice(5, 7)) - 1 + n;
+  const day = Number(isoDate.slice(8, 10));
+
+  const targetYear = year + Math.floor(monthIndex / 12);
+  const targetMonth = ((monthIndex % 12) + 12) % 12;
+  const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+
+  return [
+    String(targetYear).padStart(4, "0"),
+    String(targetMonth + 1).padStart(2, "0"),
+    String(Math.min(day, lastDay)).padStart(2, "0"),
+  ].join("-");
+}
+
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",

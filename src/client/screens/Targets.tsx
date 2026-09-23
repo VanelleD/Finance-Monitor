@@ -16,7 +16,7 @@ export function Targets({ snapshot, onChanged }: { snapshot: Snapshot; onChanged
 
   const progresses = targets.map((target) => ({
     target,
-    progress: targetProgress(target, { ...snapshot, today: snapshot.today }),
+    progress: targetProgress(target, { ...snapshot, balances: snapshot.balances, today: snapshot.today }),
   }));
 
   const needingAttention = progresses.filter(

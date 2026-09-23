@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createApp, type AppType } from "../src/server/app.js";
 import type { Db } from "../src/server/db/driver.js";
 import { ensureSchema } from "../src/server/db/migrations.js";
-import { netWorthCents, flowForMonth } from "../src/shared/derive.js";
+import { accountBalanceCents, flowForMonth, netWorthCents } from "../src/shared/derive.js";
 import type { Snapshot } from "../src/client/lib/api.js";
 
 const SECRET = "test-secret-not-used-anywhere-real";
@@ -514,5 +514,349 @@ describe("export", () => {
       expect(payload, key).toHaveProperty(key);
     }
     expect(payload.exportedAt).toEqual(expect.any(String));
+  });
+});
+
+describe("correcting an account balance", () => {
+  beforeEach(signIn);
+
+  async function checking(openingCents = 0): Promise<string> {
+    const response = await client.post("/api/accounts", {
+      name: "Chase Checking", kind: "checking", currency: "USD", openingCents,
+    });
+    return ((await response.json()) as { id: string }).id;
+  }
+
+  async function balanceOf(accountId: string): Promise<number> {
+    const snapshot = (await (await client.get("/api/snapshot")).json()) as Snapshot & {
+      balances: Record<string, number>;
+    };
+    const account = snapshot.accounts.find((a) => a.id === accountId)!;
+    return accountBalanceCents(account, snapshot.entries);
+  }
+
+  it("makes the stated balance true by recording the difference", async () => {
+    const id = await checking(100000);
+    await client.post("/api/entries", {
+      direction: "out", amountCents: 25000, occurredOn: "2026-09-10", accountId: id,
+    });
+    expect(await balanceOf(id)).toBe(75000); // 1,000 - 250
+
+    // The bank actually says $812.34.
+    const response = await client.post(`/api/accounts/${id}/balance`, { balanceCents: 81234 });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      adjusted: true,
+      deltaCents: 6234,
+      balanceCents: 81234,
+    });
+    expect(await balanceOf(id)).toBe(81234);
+  });
+
+  it("corrects downwards too", async () => {
+    const id = await checking(100000);
+    await client.post(`/api/accounts/${id}/balance`, { balanceCents: 40000 });
+    expect(await balanceOf(id)).toBe(40000);
+  });
+
+  it("records nothing when the balance already matches", async () => {
+    const id = await checking(100000);
+    const response = await client.post(`/api/accounts/${id}/balance`, { balanceCents: 100000 });
+    await expect(response.json()).resolves.toMatchObject({ adjusted: false });
+
+    const listed = (await (await client.get("/api/entries")).json()) as { total: number };
+    expect(listed.total).toBe(0);
+  });
+
+  it("keeps a correction out of income and spending", async () => {
+    const id = await checking(0);
+    await client.post("/api/entries", {
+      direction: "in", amountCents: 300000, occurredOn: "2026-09-02", accountId: id, categoryId: "cat_salary",
+    });
+    await client.post(`/api/accounts/${id}/balance`, { balanceCents: 999999, occurredOn: "2026-09-20" });
+
+    const snapshot = (await (await client.get("/api/snapshot?month=2026-09")).json()) as Snapshot;
+    const flow = flowForMonth(snapshot.entries, "2026-09");
+
+    // The correction moved the balance by a lot, but no money was earned.
+    expect(flow.inCents).toBe(300000);
+    expect(flow.outCents).toBe(0);
+    expect(snapshot.entries.some((e) => e.isAdjustment)).toBe(true);
+  });
+
+  it("leaves the correction visible in the ledger, not hidden", async () => {
+    const id = await checking(100000);
+    await client.post(`/api/accounts/${id}/balance`, { balanceCents: 81234 });
+
+    const listed = (await (await client.get("/api/entries")).json()) as {
+      entries: Array<{ payee: string; reason: string; isAdjustment: boolean }>;
+    };
+    expect(listed.entries[0]?.payee).toBe("Balance correction");
+    expect(listed.entries[0]?.reason).toContain("$812.34");
+    expect(listed.entries[0]?.isAdjustment).toBe(true);
+  });
+
+  it("404s for an account that isn't there", async () => {
+    expect((await client.post("/api/accounts/acc_nope/balance", { balanceCents: 100 })).status).toBe(404);
+  });
+});
+
+describe("recurring rules", () => {
+  beforeEach(signIn);
+
+  async function accounts(): Promise<[string, string]> {
+    const from = await client.post("/api/accounts", { name: "Checking", kind: "checking", currency: "USD", openingCents: 0 });
+    const to = await client.post("/api/accounts", { name: "Fidelity", kind: "brokerage", currency: "USD", openingCents: 0 });
+    return [
+      ((await from.json()) as { id: string }).id,
+      ((await to.json()) as { id: string }).id,
+    ];
+  }
+
+  it("refuses to let a variable-amount rule post by itself", async () => {
+    const response = await client.post("/api/schedules", {
+      name: "Weekly transfer", direction: "out", amountCents: null,
+      cadence: "weekly", anchorDate: "2026-09-07", autoPost: true,
+    });
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      fields: { autoPost: expect.stringContaining("fixed") },
+    });
+  });
+
+  it("requires a transfer rule to have a destination", async () => {
+    const [from] = await accounts();
+    const response = await client.post("/api/schedules", {
+      name: "To Fidelity", direction: "transfer", amountCents: 5000,
+      cadence: "biweekly", anchorDate: "2026-09-04", accountId: from,
+    });
+    expect(response.status).toBe(422);
+  });
+
+  it("posts every missed occurrence of an auto rule and advances it once", async () => {
+    const [from, to] = await accounts();
+    const created = await client.post("/api/schedules", {
+      name: "Fidelity $50", direction: "transfer", amountCents: 5000,
+      cadence: "biweekly", anchorDate: "2026-09-04", nextDue: "2026-09-04",
+      accountId: from, toAccountId: to, autoPost: true,
+    });
+    expect(created.status).toBe(201);
+    const schedule = (await created.json()) as { id: string };
+
+    const posted = await client.post("/api/schedules/post-due", {});
+    expect(posted.status).toBe(200);
+    const result = (await posted.json()) as { postedCount: number; created: Array<{ amountCents: number }> };
+
+    // Several fortnights have passed since the anchor, so more than one is owed.
+    expect(result.postedCount).toBeGreaterThan(0);
+    expect(result.created.every((e) => e.amountCents === 5000)).toBe(true);
+
+    const snapshot = (await (await client.get("/api/snapshot")).json()) as Snapshot;
+    const rule = snapshot.schedules.find((s) => s.id === schedule.id)!;
+    // Nothing is left owing, and the rule now points at a future date.
+    expect(rule.nextDue > snapshot.today).toBe(true);
+
+    // Running it again is a no-op rather than a duplicate.
+    const again = (await (await client.post("/api/schedules/post-due", {})).json()) as { postedCount: number };
+    expect(again.postedCount).toBe(0);
+  });
+
+  it("leaves a confirm-first rule alone until it is named", async () => {
+    const [from] = await accounts();
+    const created = await client.post("/api/schedules", {
+      name: "Groceries", direction: "out", amountCents: 8000,
+      cadence: "weekly", anchorDate: "2026-09-07", nextDue: "2026-09-07",
+      accountId: from, categoryId: "cat_groceries", autoPost: false,
+    });
+    const schedule = (await created.json()) as { id: string };
+
+    const auto = (await (await client.post("/api/schedules/post-due", {})).json()) as { postedCount: number };
+    expect(auto.postedCount).toBe(0);
+
+    const explicit = (await (
+      await client.post("/api/schedules/post-due", {
+        occurrences: [{ scheduleId: schedule.id, occurredOn: "2026-09-07" }],
+      })
+    ).json()) as { postedCount: number };
+    expect(explicit.postedCount).toBe(1);
+  });
+
+  it("takes a typed amount for a rule whose amount varies", async () => {
+    const [from, to] = await accounts();
+    const created = await client.post("/api/schedules", {
+      name: "Fidelity weekly", direction: "transfer", amountCents: null,
+      cadence: "weekly", anchorDate: "2026-09-07", nextDue: "2026-09-07",
+      accountId: from, toAccountId: to,
+    });
+    const schedule = (await created.json()) as { id: string };
+
+    // Without a figure there is nothing to record.
+    const bare = (await (
+      await client.post("/api/schedules/post-due", {
+        occurrences: [{ scheduleId: schedule.id, occurredOn: "2026-09-07" }],
+      })
+    ).json()) as { postedCount: number; skipped: Array<{ reason: string }> };
+    expect(bare.postedCount).toBe(0);
+    expect(bare.skipped[0]?.reason).toContain("varies");
+
+    const withAmount = (await (
+      await client.post("/api/schedules/post-due", {
+        occurrences: [{ scheduleId: schedule.id, occurredOn: "2026-09-07", amountCents: 12750 }],
+      })
+    ).json()) as { postedCount: number; created: Array<{ amountCents: number }> };
+    expect(withAmount.postedCount).toBe(1);
+    expect(withAmount.created[0]?.amountCents).toBe(12750);
+  });
+
+  it("refuses to record an occurrence dated in the future", async () => {
+    const [from] = await accounts();
+    const created = await client.post("/api/schedules", {
+      name: "Rent", direction: "out", amountCents: 185000,
+      cadence: "monthly", anchorDate: "2026-09-01", accountId: from,
+    });
+    const schedule = (await created.json()) as { id: string };
+
+    const result = (await (
+      await client.post("/api/schedules/post-due", {
+        occurrences: [{ scheduleId: schedule.id, occurredOn: "2099-01-01" }],
+      })
+    ).json()) as { postedCount: number; skipped: Array<{ reason: string }> };
+    expect(result.postedCount).toBe(0);
+    expect(result.skipped[0]?.reason).toContain("future");
+  });
+
+  it("skips an occurrence without recording anything", async () => {
+    const [from] = await accounts();
+    const created = await client.post("/api/schedules", {
+      name: "Gym", direction: "out", amountCents: 4000,
+      cadence: "monthly", anchorDate: "2026-09-01", nextDue: "2026-09-01", accountId: from,
+    });
+    const schedule = (await created.json()) as { id: string };
+
+    const skipped = await client.post(`/api/schedules/${schedule.id}/skip`, {});
+    expect(skipped.status).toBe(200);
+    await expect(skipped.json()).resolves.toMatchObject({ nextDue: "2026-10-01" });
+
+    const listed = (await (await client.get("/api/entries")).json()) as { total: number };
+    expect(listed.total).toBe(0);
+  });
+
+  it("links each posted entry back to the rule that made it", async () => {
+    const [from] = await accounts();
+    const created = await client.post("/api/schedules", {
+      name: "Spotify", direction: "out", amountCents: 1999,
+      cadence: "monthly", anchorDate: "2026-09-01", nextDue: "2026-09-01",
+      accountId: from, categoryId: "cat_subscriptions", autoPost: true,
+    });
+    const schedule = (await created.json()) as { id: string };
+
+    await client.post("/api/schedules/post-due", {});
+    const listed = (await (await client.get("/api/entries")).json()) as {
+      entries: Array<{ scheduleId: string | null; payee: string }>;
+    };
+    expect(listed.entries.length).toBeGreaterThan(0);
+    expect(listed.entries[0]?.scheduleId).toBe(schedule.id);
+    expect(listed.entries[0]?.payee).toBe("Spotify");
+  });
+
+  it("edits and removes a rule", async () => {
+    const [from] = await accounts();
+    const created = await client.post("/api/schedules", {
+      name: "Old name", direction: "out", amountCents: 1000,
+      cadence: "weekly", anchorDate: "2026-09-01", accountId: from,
+    });
+    const schedule = (await created.json()) as { id: string };
+
+    expect((await client.patch(`/api/schedules/${schedule.id}`, { name: "New name", amountCents: 2000 })).status).toBe(200);
+    let snapshot = (await (await client.get("/api/snapshot")).json()) as Snapshot;
+    expect(snapshot.schedules[0]).toMatchObject({ name: "New name", amountCents: 2000 });
+
+    expect((await client.del(`/api/schedules/${schedule.id}`)).status).toBe(204);
+    snapshot = (await (await client.get("/api/snapshot")).json()) as Snapshot;
+    expect(snapshot.schedules).toHaveLength(0);
+  });
+});
+
+describe("debts people actually carry", () => {
+  beforeEach(signIn);
+
+  it("accepts buy-now-pay-later and money owed to an app", async () => {
+    for (const [name, kind] of [
+      ["Afterpay", "bnpl"],
+      ["Cash App", "person"],
+      ["Capital One", "credit_card"],
+      ["Line of credit", "line_of_credit"],
+    ]) {
+      const response = await client.post("/api/liabilities", { name, kind, balanceCents: 10000 });
+      expect(response.status, `${name} (${kind})`).toBe(201);
+    }
+
+    const snapshot = (await (await client.get("/api/snapshot")).json()) as Snapshot;
+    expect(snapshot.liabilities).toHaveLength(4);
+    expect(snapshot.liabilities.map((l) => l.kind).sort()).toEqual([
+      "bnpl", "credit_card", "line_of_credit", "person",
+    ]);
+  });
+
+  it("still rejects a kind that means nothing", async () => {
+    const response = await client.post("/api/liabilities", {
+      name: "Mystery", kind: "vibes", balanceCents: 100,
+    });
+    expect(response.status).toBe(422);
+  });
+});
+
+describe("recording some of what is due", () => {
+  beforeEach(signIn);
+
+  it("does not bury older occurrences when only the newest is recorded", async () => {
+    const account = ((await (
+      await client.post("/api/accounts", { name: "Checking", kind: "checking", currency: "USD", openingCents: 0 })
+    ).json()) as { id: string }).id;
+
+    // Three weeks owed, amount varies, so each one waits for a figure.
+    const created = await client.post("/api/schedules", {
+      name: "Fidelity weekly", direction: "out", amountCents: null,
+      cadence: "weekly", anchorDate: "2026-09-01", nextDue: "2026-09-01", accountId: account,
+    });
+    const schedule = (await created.json()) as { id: string };
+
+    const before = (await (await client.get("/api/snapshot")).json()) as Snapshot;
+    const owed = before.schedules[0]!;
+    expect(owed.nextDue).toBe("2026-09-01");
+
+    // Record only the third week.
+    const posted = (await (
+      await client.post("/api/schedules/post-due", {
+        occurrences: [{ scheduleId: schedule.id, occurredOn: "2026-09-15", amountCents: 9000 }],
+      })
+    ).json()) as { postedCount: number };
+    expect(posted.postedCount).toBe(1);
+
+    // The first two are still owed, not silently stepped over.
+    const after = (await (await client.get("/api/snapshot")).json()) as Snapshot;
+    expect(after.schedules[0]?.nextDue).toBe("2026-09-01");
+  });
+
+  it("moves past the batch once nothing older is left", async () => {
+    const created = await client.post("/api/schedules", {
+      name: "Rent", direction: "out", amountCents: 185000,
+      cadence: "monthly", anchorDate: "2026-07-01", nextDue: "2026-07-01",
+    });
+    const schedule = (await created.json()) as { id: string };
+
+    const snapshot = (await (await client.get("/api/snapshot")).json()) as Snapshot;
+    const everything = [];
+    for (let month = 7; month <= Number(snapshot.today.slice(5, 7)); month++) {
+      everything.push({
+        scheduleId: schedule.id,
+        occurredOn: `2026-${String(month).padStart(2, "0")}-01`,
+      });
+    }
+
+    await client.post("/api/schedules/post-due", { occurrences: everything });
+
+    const after = (await (await client.get("/api/snapshot")).json()) as Snapshot;
+    expect(after.schedules[0]!.nextDue > snapshot.today).toBe(true);
   });
 });

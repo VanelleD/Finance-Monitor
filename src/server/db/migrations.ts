@@ -129,6 +129,63 @@ export const MIGRATIONS: Migration[] = [
       ),
     ],
   },
+  {
+    name: "0003_accounts_debts_and_schedules",
+    statements: [
+      // SQLite cannot widen a CHECK constraint in place, so the table is rebuilt.
+      // Adds the debts people actually carry: buy-now-pay-later, a line of
+      // credit, and money owed to a person or a cash app.
+      `CREATE TABLE IF NOT EXISTS liabilities_new (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('credit_card','bnpl','loan','mortgage','line_of_credit','person','other')),
+        balance_cents INTEGER NOT NULL,
+        apr_bps INTEGER,
+        min_payment_cents INTEGER,
+        due_day INTEGER CHECK (due_day IS NULL OR (due_day >= 1 AND due_day <= 31)),
+        archived INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      )`,
+      `INSERT INTO liabilities_new (id, name, kind, balance_cents, apr_bps, min_payment_cents, due_day, archived, created_at)
+         SELECT id, name, kind, balance_cents, apr_bps, min_payment_cents, due_day, archived, created_at FROM liabilities`,
+      `DROP TABLE liabilities`,
+      `ALTER TABLE liabilities_new RENAME TO liabilities`,
+
+      // A balance correction moves an account's balance without being income or
+      // spending. Flagged so the savings rate cannot be distorted by one.
+      `ALTER TABLE entries ADD COLUMN is_adjustment INTEGER NOT NULL DEFAULT 0`,
+
+      // Which recurring rule produced this entry, if any.
+      `ALTER TABLE entries ADD COLUMN schedule_id TEXT`,
+
+      `CREATE TABLE IF NOT EXISTS schedules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        direction TEXT NOT NULL CHECK (direction IN ('in','out','transfer')),
+        -- NULL means the amount varies, so each occurrence is filled in by hand.
+        amount_cents INTEGER CHECK (amount_cents IS NULL OR amount_cents > 0),
+        cadence TEXT NOT NULL CHECK (cadence IN ('weekly','biweekly','monthly')),
+        -- The first occurrence. Biweekly and semimonthly are both counted from here.
+        anchor_date TEXT NOT NULL,
+        next_due TEXT NOT NULL,
+        -- On for a transfer the bank makes by itself; off for anything you decide.
+        auto_post INTEGER NOT NULL DEFAULT 0,
+        payee TEXT NOT NULL DEFAULT '',
+        reason TEXT NOT NULL DEFAULT '',
+        account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+        to_account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+        category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+        source_id TEXT REFERENCES sources(id) ON DELETE SET NULL,
+        target_id TEXT REFERENCES targets(id) ON DELETE SET NULL,
+        liability_id TEXT REFERENCES liabilities(id) ON DELETE SET NULL,
+        archived INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS schedules_next_due ON schedules (next_due)`,
+      `CREATE INDEX IF NOT EXISTS entries_schedule ON entries (schedule_id)`,
+      `CREATE INDEX IF NOT EXISTS entries_adjustment ON entries (is_adjustment)`,
+    ],
+  },
 ];
 
 /**

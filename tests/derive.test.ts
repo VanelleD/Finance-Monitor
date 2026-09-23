@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   accountBalanceCents, byCarryingCost, categoryTotals, flowForMonth, flowSeries,
-  netWorthCents, netWorthTrend, targetProgress, totalAssetsCents, withOther,
+  netWorthCents, netWorthFrom, netWorthTrend, ownedCents, targetProgress,
+  totalAssetsCents, withOther,
 } from "../src/shared/derive.js";
 import type { Account, Asset, Entry, Liability, Target } from "../src/shared/types.js";
 
@@ -16,6 +17,7 @@ function entry(partial: Partial<Entry> & Pick<Entry, "direction" | "amountCents"
     id: Math.random().toString(36).slice(2),
     payee: "", reason: "", accountId: null, toAccountId: null,
     categoryId: null, sourceId: null, targetId: null, repeatRule: null,
+    isAdjustment: false, scheduleId: null,
     ...partial,
   };
 }
@@ -352,5 +354,79 @@ describe("netWorthTrend", () => {
       entry({ direction: "transfer", amountCents: 250000, occurredOn: "2026-09-05" }),
     ];
     expect(netWorthTrend(800000, entries, ["2026-08", "2026-09"])).toEqual([800000, 800000]);
+  });
+});
+
+describe("net worth from live account balances", () => {
+  function acct(id: string, openingCents = 0, archived = false): Account {
+    return { id, name: id, kind: "checking", currency: "USD", openingCents, archived };
+  }
+
+  it("counts what is in each account, plus anything owned outside one", () => {
+    const accounts = [acct("checking"), acct("savings")];
+    const balances = { checking: 482015, savings: 1840000 };
+    const car: Asset = { ...asset(1420000), kind: "vehicle", accountId: null };
+
+    expect(ownedCents(accounts, balances, [car])).toBe(482015 + 1840000 + 1420000);
+  });
+
+  it("never counts an account twice when an asset row mirrors it", () => {
+    // The seeded data does exactly this: Ally Savings as both an account and an
+    // asset. The account balance is the live one, so the asset row is skipped.
+    const accounts = [acct("savings")];
+    const balances = { savings: 1840000 };
+    const mirror: Asset = { ...asset(1240000), kind: "cash", accountId: "savings" };
+
+    expect(ownedCents(accounts, balances, [mirror])).toBe(1840000);
+  });
+
+  it("falls back to the opening figure for an account with no balance yet", () => {
+    expect(ownedCents([acct("cash", 34000)], {}, [])).toBe(34000);
+  });
+
+  it("subtracts every debt, including the newer kinds", () => {
+    const worth = netWorthFrom({
+      accounts: [acct("checking")],
+      balances: { checking: 500000 },
+      assets: [],
+      liabilities: [
+        liability({ id: "card", kind: "credit_card", balanceCents: 214088 }),
+        liability({ id: "afterpay", kind: "bnpl", balanceCents: 12000 }),
+        liability({ id: "cashapp", kind: "person", balanceCents: 5000 }),
+      ],
+    });
+    expect(worth).toBe(500000 - 214088 - 12000 - 5000);
+  });
+
+  it("ignores archived accounts", () => {
+    const accounts = [acct("open"), acct("closed", 0, true)];
+    expect(ownedCents(accounts, { open: 10000, closed: 999999 }, [])).toBe(10000);
+  });
+});
+
+describe("targets read the balance the server worked out", () => {
+  const base = {
+    entries: [] as Entry[], assets: [] as Asset[], liabilities: [] as Liability[],
+    accounts: [] as Account[], today: TODAY,
+  };
+
+  it("prefers the full-ledger balance over recomputing from a loaded window", () => {
+    // The window holds one recent deposit; the real account holds far more.
+    const savings: Account = { id: "savings", name: "HYSA", kind: "savings", currency: "USD", openingCents: 0, archived: false };
+    const windowed = [entry({ direction: "in", amountCents: 50000, occurredOn: "2026-09-01", accountId: "savings" })];
+
+    const target: Target = {
+      id: "t1", name: "Emergency fund", kind: "save_to", amountCents: 2500000,
+      deadline: null, accountId: "savings", liabilityId: null, categoryId: null,
+      baselineCents: 0, archived: false,
+    };
+
+    const withoutBalances = targetProgress(target, { ...base, accounts: [savings], entries: windowed });
+    expect(withoutBalances.currentCents).toBe(50000); // only what the window shows
+
+    const withBalances = targetProgress(target, {
+      ...base, accounts: [savings], entries: windowed, balances: { savings: 1840000 },
+    });
+    expect(withBalances.currentCents).toBe(1840000); // the truth
   });
 });

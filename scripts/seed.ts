@@ -77,7 +77,7 @@ const checking = await repo.createAccount(db, {
   name: "Chase Checking", kind: "checking", currency: "USD", openingCents: 482015, archived: false,
 });
 const savings = await repo.createAccount(db, {
-  name: "Ally Savings", kind: "savings", currency: "USD", openingCents: 1240000, archived: false,
+  name: "Capital One 360 Savings", kind: "savings", currency: "USD", openingCents: 1240000, archived: false,
 });
 const brokerage = await repo.createAccount(db, {
   name: "Fidelity Brokerage", kind: "brokerage", currency: "USD", openingCents: 0, archived: false,
@@ -86,8 +86,8 @@ const cash = await repo.createAccount(db, {
   name: "Cash on hand", kind: "cash", currency: "USD", openingCents: 34000, archived: false,
 });
 
-const salary = await repo.createSource(db, "Northwind Labs");
-const freelance = await repo.createSource(db, "Meridian Studio");
+const salary = await repo.createSource(db, "Job");
+const freelance = await repo.createSource(db, "Content");
 const dividends = await repo.createSource(db, "Fidelity");
 
 /* ----------------------------- what you own/owe ---------------------------- */
@@ -101,7 +101,7 @@ await repo.createAsset(db, {
   accountId: null, archived: false,
 });
 await repo.createAsset(db, {
-  name: "Ally Savings", kind: "cash", valueCents: 1840000, valuedOn: day(0, 16),
+  name: "Capital One 360 Savings", kind: "cash", valueCents: 1840000, valuedOn: day(0, 16),
   accountId: savings.id, archived: false,
 });
 await repo.createAsset(db, {
@@ -129,6 +129,18 @@ const card = await repo.createLiability(db, {
   name: "Sapphire credit card", kind: "credit_card", balanceCents: 214088,
   aprBps: 2124, minPaymentCents: 6500, dueDay: 3, archived: false,
 });
+await repo.createLiability(db, {
+  name: "Capital One Quicksilver", kind: "credit_card", balanceCents: 87450,
+  aprBps: 2699, minPaymentCents: 3500, dueDay: 18, archived: false,
+});
+await repo.createLiability(db, {
+  name: "Afterpay", kind: "bnpl", balanceCents: 21600,
+  aprBps: null, minPaymentCents: 5400, dueDay: 12, archived: false,
+});
+await repo.createLiability(db, {
+  name: "Cash App borrow", kind: "person", balanceCents: 7500,
+  aprBps: null, minPaymentCents: null, dueDay: null, archived: false,
+});
 
 /* --------------------------------- targets -------------------------------- */
 
@@ -150,6 +162,46 @@ await repo.createTarget(db, {
   name: "Reach $150,000 net worth", kind: "net_worth", amountCents: 15000000,
   deadline: `${addMonths(month, 27)}-01`, accountId: null,
   liabilityId: null, categoryId: null, baselineCents: 0, archived: false,
+});
+
+/* ------------------------------ recurring rules --------------------------- */
+
+// Two separate Fidelity pulls: a fixed fifty every fortnight that the broker
+// takes by itself, and a weekly one whose size changes, so it waits to be told.
+await repo.createSchedule(db, {
+  name: "Fidelity \u2014 $50 automatic", direction: "transfer", amountCents: 5000,
+  cadence: "biweekly", anchorDate: day(-1, 4), nextDue: day(0, 4), autoPost: true,
+  payee: "Fidelity", reason: "Automatic investment",
+  accountId: checking.id, toAccountId: brokerage.id,
+  categoryId: null, sourceId: null, targetId: null, liabilityId: null, archived: false,
+});
+await repo.createSchedule(db, {
+  name: "Fidelity \u2014 weekly transfer", direction: "transfer", amountCents: null,
+  cadence: "weekly", anchorDate: day(0, 7), nextDue: day(0, 7), autoPost: false,
+  payee: "Fidelity", reason: "Whatever is spare that week",
+  accountId: checking.id, toAccountId: brokerage.id,
+  categoryId: null, sourceId: null, targetId: null, liabilityId: null, archived: false,
+});
+await repo.createSchedule(db, {
+  name: "Paycheque", direction: "in", amountCents: 371000,
+  cadence: "biweekly", anchorDate: day(-1, 2), nextDue: day(0, 16), autoPost: true,
+  payee: "Job", reason: "Salary",
+  accountId: checking.id, toAccountId: null,
+  categoryId: "cat_salary", sourceId: salary.id, targetId: null, liabilityId: null, archived: false,
+});
+await repo.createSchedule(db, {
+  name: "Rent", direction: "out", amountCents: 185000,
+  cadence: "monthly", anchorDate: day(-1, 11), nextDue: day(0, 11), autoPost: false,
+  payee: "Rent \u2014 Halsey St", reason: "Monthly rent",
+  accountId: checking.id, toAccountId: null,
+  categoryId: "cat_housing", sourceId: null, targetId: null, liabilityId: null, archived: false,
+});
+await repo.createSchedule(db, {
+  name: "Emergency fund top-up", direction: "transfer", amountCents: 60000,
+  cadence: "monthly", anchorDate: day(-1, 15), nextDue: day(0, 15), autoPost: true,
+  payee: "Capital One 360", reason: "Monthly top-up",
+  accountId: checking.id, toAccountId: savings.id,
+  categoryId: null, sourceId: null, targetId: emergencyFund.id, liabilityId: null, archived: false,
 });
 
 /* --------------------------------- entries -------------------------------- */
@@ -212,6 +264,8 @@ for (let offset = 5; offset >= 0; offset--) {
       sourceId: seed.sourceId ?? null,
       targetId: seed.targetId ?? null,
       repeatRule: seed.repeat ?? null,
+      isAdjustment: false,
+      scheduleId: null,
     });
     created++;
   }
@@ -219,6 +273,6 @@ for (let offset = 5; offset >= 0; offset--) {
 
 void studentLoan;
 
-console.log(`\nSeeded ${created} entries across 6 months, 4 money sources, 6 assets, 3 liabilities, 4 targets.`);
+console.log(`\nSeeded ${created} entries across 6 months, 4 accounts, 6 assets, 6 debts, 4 targets, 5 recurring rules.`);
 console.log(`Database: ${FILE}`);
 console.log(`\nNow run \`npm run dev\` and set a passphrase.\n`);

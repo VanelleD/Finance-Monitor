@@ -15,6 +15,7 @@ the maths don't change between them.
 |---|---|
 | **Dashboard** | Net worth, money in vs out for the month, where it went by category, recent activity, target progress |
 | **Transactions** | The full ledger, filterable by direction, category, money source and free text, with CSV export |
+| **Accounts** | Every account with its live balance and a *Set balance* correction; every debt — cards, buy-now-pay-later, loans, money owed to a person or an app; recurring rules; income sources |
 | **Net worth** | Assets and liabilities side by side, a shared-scale composition bar, and which debt costs most to carry |
 | **Targets** | Four kinds of goal, each measured from the entries you already record |
 
@@ -155,7 +156,25 @@ that module is pure it runs identically on the server, in the browser and in tes
 
 **Transfers are a third direction, not income or expense.** Moving $600 from
 checking to savings is neither. Counting it either way would corrupt the savings
-rate, which is the main thing worth knowing.
+rate, which is the main thing worth knowing. A balance correction is excluded for
+the same reason.
+
+**Setting a balance records a correction, it does not rewrite history.** When you
+say an account really holds $5,231.89, the difference is written as a dated,
+flagged entry. The ledger still adds up, you can see when and by how much it was
+corrected, and no past entry is silently altered. Because the correction is
+flagged, it never counts as income or spending.
+
+**An account balance is what counts toward net worth.** An asset row carrying an
+`accountId` is that same money written down twice, so it is skipped — correcting a
+balance can never leave a stale duplicate inflating the total.
+
+**A recurring rule with a fixed amount can record itself; one whose amount varies
+cannot.** Rules the bank performs by itself are posted on load. Everything else
+waits in a tray on the dashboard until you confirm it, which is also where a
+varying amount gets its figure. Occurrences are always counted from the rule's
+anchor date, never from the last one, so a rule on the 31st does not drift to the
+28th forever after February.
 
 **Key derivation runs in the browser.** Cloudflare caps a request at 10ms of CPU,
 which 600k rounds of PBKDF2 would blow straight through. The client stretches the
@@ -207,10 +226,12 @@ Two mistakes are easy to make and both used to fail unhelpfully. Now:
 
 ## What isn't built yet
 
-- **Recurring entries** can be flagged `repeatRule: "monthly"`, but nothing
-  generates the next occurrence yet — the flag is stored, not acted on.
 - **The net-worth trend** on the dashboard is traced backwards from today through
   monthly flow, so it reflects money saved and spent but not revaluations. It's
   labelled as an estimate on the card. Storing monthly snapshots would make it exact.
 - **Multi-currency.** Everything is USD; the column exists but nothing converts.
-- **CSV import**, bank sync, and categories/money-source management screens.
+- **CSV import** and bank sync.
+- **Category management.** The eighteen seeded categories can be added to through
+  the API but there is no screen for renaming or retiring one.
+- **Debt payments do not reduce a debt's balance automatically.** Paying the card
+  is recorded as spending; the balance on the Accounts screen is still typed in.
